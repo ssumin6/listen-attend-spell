@@ -35,7 +35,7 @@ def main(args):
     hid_dim = 512
     char_dim = len(mapping.keys())
 
-    beam_search = False
+    beam_search = True
 
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -135,28 +135,21 @@ def main(args):
             src_batch = Variable(torch.FloatTensor(src_batch)).to(device)
             tgt_batch = Variable(torch.LongTensor(tgt_batch)).to(device) 
             
-            bs = src_batch.size()[0]
-            y = torch.zeros(bs, 1).long().to(device)
+            y = torch.zeros(1, 1).long().to(device)
 
             with torch.no_grad():   
                 if (beam_search):
                     # BEAM SEARCH INFERENCE
                     sentences = model.predict(src_batch, y, beam_size, eos_idx)
-                    sentences = sentences.unsqueeze(dim=0)
-                    tgt_batch = tgt_batch[0].unsqueeze(dim=0)
+                    tgt_batch = tgt_batch[0].unsqueeze(dim=0).tolist()
                 else:
                     # GREEDY SEARCH INFERENCE
                     sentences = model.greedy_predict(src_batch, y, max_len, eos_idx)
-                generated.append(sentences)
-                gt.append(tgt_batch)
-            print("finish one iter")
-
-        gt = torch.stack(gt, dim = 0)
-        print('test(gt.size()): ', gt.size())
-        gt = gt.tolist()
-        generated = torch.stack(generated, dim = 0)
-        print('test(generated.size()): ', generated.size())
-        generated = generated.tolist()
+                    tgt_batch = tgt_batch.tolist()
+                sentences = sentences.tolist()
+                generated = generated + sentences
+                gt = gt + tgt_batch
+            # print("finish one iter")
 
         wer = WER(generated, gt)
         print("BEAM SEARCH : %d" %(beam_search))
@@ -164,8 +157,12 @@ def main(args):
         print("TIME CONSUMED %s" %(time.time() - start))
 
         sentences = seq_to_sen(generated)
+        write_sen = []
+        for line in sentences:
+            tmp = ''.join(line)
+            write_sen.append(tmp)
         with open("asr_texts.txt", 'w+') as f:
-            for line in sentences:
+            for line in write_sen:
                 f.write(line+"\n")
 
 

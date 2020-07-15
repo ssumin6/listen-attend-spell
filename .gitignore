@@ -3,3 +3,4 @@ processed_data/*
 *.tar.gz
 __pycache__/*
 dataset/__pycache__/*
+*.zip

@@ -1,8 +1,14 @@
+import os
 import pickle
 
 def seq_to_sen(seq):
     with open(os.path.join('libri_fbank40_char30', 'mapping.pkl'), 'rb') as f:
         mapping = pickle.load(f)
+
+    reverse_map = {}
+    for key in mapping.keys():
+        value = mapping[key]
+        reverse_map[value] = key
     
     # seq shape : [batch_size, seq]
     # Assume that seq input is python list
@@ -16,8 +22,8 @@ def seq_to_sen(seq):
             sos_idx = 0
         else:
             sos_idx = line.index('<sos>')
-        tmp = [mapping[idx] for idx in line[sos_idx+1:eos_idx]]
-        sentences.append()
+        tmp = [reverse_map[int(idx)] for idx in line[sos_idx+1:eos_idx]]
+        sentences.append(tmp)
 
     return sentences
 
@@ -43,10 +49,18 @@ def WER(src, gt):
     src = seq_to_sen(src)
     gt = seq_to_sen(gt)
 
+    srcs = []
     for line in src: 
-        line = ''.join(line).split(' ')
+        tmp = ''.join(line).split(' ')
+        srcs.append(tmp)
+    src = srcs
+    # print(src)
+    gts = []
     for line in gt: 
-        line = ''.join(line).split(' ')
+        tmp = ''.join(line).split(' ')
+        gts.append(tmp)
+    gt = gts
+    # print(gt)
 
     for idx in range(len(gt)):
         N += len(gt[idx])

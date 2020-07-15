@@ -90,15 +90,13 @@ class Speller(nn.Module):
 
     def predict(self, enc_outputs, y, beam_size, eos_token):
         # FOR BEAM SEARCH INFERENCE
-        # enc_outputs [different seq_len][hid_dim]
-        # TODO : seq 1개인걸 여러개로 바꾸기..? 
 
-        maxlen = enc_outputs.size()[0]
         enc_outputs = enc_outputs.unsqueeze(dim=0)
+        # enc_outputs [batch_size][different seq_len][hid_dim]
+        maxlen = enc_outputs.size()[1] 
 
         batch_size = 1
 
-        # *********Init decoder rnn
         s = torch.empty(batch_size, self.hid_dim, requires_grad=True).to(self.device)
         c1 = torch.empty(batch_size, self.hid_dim, requires_grad=True).to(self.device)
         c2 = torch.empty(batch_size, self.hid_dim, requires_grad=True).to(self.device)
@@ -111,11 +109,9 @@ class Speller(nn.Module):
         nn.init.uniform_(s2, a=-0.1, b=0.1)
 
         c = self.attention(s, enc_outputs) # shape : [batch_size][hid_dim]
+        vy = torch.zeros(1, 1).long().to(self.device)
 
-        # prepare sos
-        vy = encoder_outputs.new_zeros(1).long() # TODO
-
-        hyp = {'score': 0.0, 'yseq': [y], 'c_prev': [c1, c2], 'h_prev': [s, s2],
+        hyp = {'score': 0.0, 'yseq': [y.item()], 'c_prev': [c1, c2], 'h_prev': [s, s2],
                'a_prev': c}
         hyps = [hyp]
         ended_hyps = []
@@ -123,15 +119,15 @@ class Speller(nn.Module):
         for i in range(maxlen):
             hyps_best_kept = []
             for hyp in hyps:
-                # vy.unsqueeze(1)
-                vy[0] = hyp['yseq'][i]
+                vy[0][0] = hyp['yseq'][i]
                 c = hyp['a_prev']
                 s, s2 = hyp['h_prev']
                 c1, c2 = hyp['c_prev']
                 embedded = self.embed(vy)
+                embedded = embedded.transpose(0, 1)
                 s, c1 = self.lstm1(torch.cat((embedded[0], c), dim=1), (s, c1))
                 s2, c2 = self.lstm2(s, (s2, c2))
-                c = self.attention(s2, enc_outputs) # shape : [batch_size][hid_dim]
+                c = self.attention(s2, enc_outputs) # shape : [1][hid_dim]
                 local_scores = F.log_softmax(self.mlp(torch.cat((s2, c), dim=1)), dim=-1)
                 # topk scores
                 local_best_scores, local_best_ids = torch.topk(
@@ -172,15 +168,11 @@ class Speller(nn.Module):
                     remained_hyps.append(hyp)
 
             hyps = remained_hyps
-            if len(hyps) > 0:
-                print('remained hypothes: ' + str(len(hyps)))
-            else:
-                print('no hypothesis. Finish decoding.')
+            if (len(hyps) <= 0):
                 break
-
         # end for i in range(maxlen)
-        nbest_hyps = sorted(ended_hyps, key=lambda x: x['score'], reverse=True)[
-            :1]
+
+        nbest_hyps = sorted(ended_hyps, key=lambda x: x['score'], reverse=True)[:1]
         return nbest_hyps
 
 
@@ -216,5 +208,6 @@ class ListenAttendSpell(nn.Module):
     def predict(self, x, y, beam_size, eos_token):
         # FOR BEAM SEARCH INFERENCE
         enc_outputs = self.listener(x)
-        hypos = self.speller.predict(enc_outputs[0], y[0], beam_size, eos_token)
+        hypos = self.speller.predict(enc_outputs[0], y, beam_size, eos_token)
+        hypos = torch.Tensor(list(map(lambda x:x['yseq'], list(hypos))))
         return hypos
