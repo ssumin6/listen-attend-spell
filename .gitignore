@@ -1,0 +1,5 @@
+libri_fbank40_char30/*
+processed_data/*
+*.tar.gz
+__pycache__/*
+dataset/__pycache__/*
