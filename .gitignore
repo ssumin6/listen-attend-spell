@@ -1,6 +1,8 @@
 libri_fbank40_char30/*
 processed_data/*
+processed_data_32/*
 *.tar.gz
 __pycache__/*
-dataset/__pycache__/*
+dataset/__pycache__/data*
 *.zip
+*.pyc

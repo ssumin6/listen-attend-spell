@@ -29,7 +29,6 @@ def main(args):
     bst_loss = 1e9
 
     eos_idx = 1
-    pad_idx = 2
 
     filter_bank_size = 40
     hid_dim = 512
@@ -48,7 +47,7 @@ def main(args):
     # SET OPTIMIZER
     optimizer = torch.optim.ASGD(model.parameters(), lr=lr)
 
-    criterion = torch.nn.NLLLoss(ignore_index=pad_idx).to(device)
+    criterion = torch.nn.NLLLoss().to(device)
 
     # Load checkpoint
     save_path = "checkpoint/best.tar"
@@ -75,16 +74,18 @@ def main(args):
         for epoch in range(start_epoch, args.epochs):
             epoch_start = time.time()
             # TRAIN STEP
-            for src_batch, tgt_batch in train_loader:
+            for src_batch, tgt_batch, lgt_batch in train_loader:
                 src_batch = src_batch.astype(np.double)
                 tgt_batch = tgt_batch.astype(np.double)
+                lgt_batch = lgt_batch.astype(np.integer)
                 src_batch = Variable(torch.FloatTensor(src_batch)).to(device)
                 tgt_batch = Variable(torch.LongTensor(tgt_batch)).to(device)
+                lgt_batch = Variable(torch.IntTensor(lgt_batch)).to(device)
 
                 model.train()
                 optimizer.zero_grad()
 
-                output = model(src_batch, tgt_batch)
+                output = model(src_batch, tgt_batch, lgt_batch)
                 m, l, h = output.size()
                 output = output.contiguous().view(m*l, h)
                 gt = tgt_batch.view(-1)
@@ -97,15 +98,17 @@ def main(args):
                 itr += 1
 
             # VALID STEP
-            for src_batch, tgt_batch in valid_loader:
+            for src_batch, tgt_batch, lgt_batch in valid_loader:
                 model.eval()
                 src_batch = src_batch.astype(np.double)
                 tgt_batch = tgt_batch.astype(np.double)
+                lgt_batch = lgt_batch.astype(np.integer)
                 src_batch = Variable(torch.FloatTensor(src_batch)).to(device)
                 tgt_batch = Variable(torch.LongTensor(tgt_batch)).to(device)
+                lgt_batch = Variable(torch.IntTensor(lgt_batch)).to(device)
 
                 with torch.no_grad():
-                    output = model(src_batch, tgt_batch)
+                    output = model(src_batch, tgt_batch, lgt_batch)
                     m, l, h = output.size()
                     output = output.contiguous().view(m*l, h)
                     gt = tgt_batch.view(-1)
@@ -128,23 +131,25 @@ def main(args):
 
         max_len = 1000
 
-        for src_batch, tgt_batch in test_loader:
+        for src_batch, tgt_batch, lgt_batch in test_loader:
             model.eval()
             src_batch = src_batch.astype(np.double)
             tgt_batch = tgt_batch.astype(np.double) # [batch_size][seq_len]
+            lgt_batch = lgt_batch.astype(np.integer)
             src_batch = Variable(torch.FloatTensor(src_batch)).to(device)
-            tgt_batch = Variable(torch.LongTensor(tgt_batch)).to(device) 
-            
+            tgt_batch = Variable(torch.LongTensor(tgt_batch)).to(device)
+            lgt_batch = Variable(torch.IntTensor(lgt_batch)).to(device) 
+        
             y = torch.zeros(1, 1).long().to(device)
 
             with torch.no_grad():   
                 if (beam_search):
                     # BEAM SEARCH INFERENCE
-                    sentences = model.predict(src_batch, y, beam_size, eos_idx)
+                    sentences = model.predict(src_batch, y, lgt_batch, beam_size, eos_idx)
                     tgt_batch = tgt_batch[0].unsqueeze(dim=0).tolist()
                 else:
                     # GREEDY SEARCH INFERENCE
-                    sentences = model.greedy_predict(src_batch, y, max_len, eos_idx)
+                    sentences = model.greedy_predict(src_batch, y, lgt_batch, max_len, eos_idx)
                     tgt_batch = tgt_batch.tolist()
                 sentences = sentences.tolist()
                 generated = generated + sentences
@@ -180,7 +185,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--batch_size',
         type=int,
-        default=32)
+        default=16)
 
     parser.add_argument(
         '--test',

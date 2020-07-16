@@ -16,13 +16,14 @@ def load_and_pad(src_batch, max_len, path):
     
 def pad(batch, max_len):
     for i in range(len(batch)):
-        batch[i] += [2] * (max_len - len(batch[i]))
+        batch[i] += [0] * (max_len - len(batch[i]))
     return np.asarray(batch)
 
 def batch_processing(batch, save_path, idx, file_read_path):
     lengths = []
     src_batch = []
     tgt_batch = []
+    batch = sorted(batch, key=lambda x:x[2], reverse=True)
     
     for path, labels, length in batch:
         src_batch.append(path)
@@ -34,13 +35,17 @@ def batch_processing(batch, save_path, idx, file_read_path):
 
     src_batch = load_and_pad(src_batch, max_length, file_read_path)
     tgt_batch = pad(tgt_batch, max_length)
+    lengths = np.asarray(lengths)
+    # print(np.shape(lengths))
 
     src_file = os.path.join(save_path, "speech%03d.npy" %idx)
     np.save(src_file, src_batch)
     tgt_file = os.path.join(save_path, "labels%03d.npy" %idx)
     np.save(tgt_file, tgt_batch)
+    lgt_file = os.path.join(save_path, "length%03d.npy" %idx)
+    np.save(lgt_file, lengths)
 
-    return src_file, tgt_file
+    return src_file, tgt_file, lgt_file
 
 def main(args):
     dataset = load_data(args.path, args.test)
@@ -70,10 +75,9 @@ def main(args):
         batch = dataset[args.batch_size*index : args.batch_size*(index+1)]
         batch_len = len(batch)
 
-        src_file, tgt_file = batch_processing(batch, subpath, index, args.path)
-        length = min(args.batch_size, batch_len)
+        src_file, tgt_file, lgt_file = batch_processing(batch, subpath, index, args.path)
 
-        new_file_set.append([src_file, tgt_file, str(length)])
+        new_file_set.append([src_file, tgt_file, lgt_file])
 
         index += 1
     with open(os.path.join(path, csv_file), "w+") as f:
@@ -91,7 +95,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--batch_size',
         type=int,
-        default=32)
+        default=16)
 
     parser.add_argument(
         '--test',

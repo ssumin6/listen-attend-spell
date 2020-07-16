@@ -7,11 +7,13 @@ import matplotlib.pyplot as plt
 
 def load_data(path, test=False, preprocess=True):
     data = []
-
+    
     if not test:
         file_name = 'train-clean-100.csv'
     else:
         file_name = 'test-clean.csv'
+        # file_name = "train-test-set.csv"
+    
 
     with open (os.path.join(path, file_name)) as f:
         csv = f.readlines()
@@ -20,7 +22,7 @@ def load_data(path, test=False, preprocess=True):
             if (preprocess):
                 data.append([line[1], line[2], int(line[3])]) # [file_path, labels, length]
             else:
-                data.append([line[0], line[1], int(line[2])]) # [file_path, labels, length]
+                data.append([line[0], line[1], line[2]]) # [file_path, labels, length_file]
 
     return data
 
@@ -53,11 +55,12 @@ class DataLoader:
         return self
 
     def load(self, batch):
-        src_path, tgt_path, batch_size = batch[0]
+        src_path, tgt_path, lgt_path = batch[0]
         src_batch = np.load(src_path)
         tgt_batch = np.load(tgt_path)
+        lgt_batch = np.load(lgt_path)
 
-        return src_batch, tgt_batch
+        return src_batch, tgt_batch, lgt_batch
 
     def __next__(self):
         if self.index >= self.size:
@@ -65,11 +68,11 @@ class DataLoader:
         
         batch = self.dataset[self.index : self.index+1]
 
-        src_batch, tgt_batch = self.load(batch)
+        src_batch, tgt_batch, lgt_batch = self.load(batch)
 
         self.index += 1
 
-        return src_batch, tgt_batch
+        return src_batch, tgt_batch, lgt_batch
 
 def get_loader(path, dataset, batch_size, shuffle=False):
     data_loader = DataLoader(path, dataset, batch_size=batch_size, pad_idx=2, shuffle=shuffle)

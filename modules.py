@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 import torch.nn.functional as F
 
 def is_finished(seq, eos_token):
@@ -9,12 +10,25 @@ def is_finished(seq, eos_token):
             return False
     return True
 
+def compute_mask(seq, seq_len):
+    ##### compute mask for masked_fill
+    bs, ts, hs = seq.shape
+    mask = torch.zeros(0)
+    mask = np.zeros((bs, ts, hs))
+    for idx, sl in enumerate(seq_len):
+        mask[sl:, :] = 1  
+    mask = torch.from_numpy(mask).to(
+        seq_len.device, dtype=torch.bool)  # BNxT
+    return mask
+
 class Attention(nn.Module):
     def __init__(self):
         super(Attention, self).__init__()
 
-    def forward(self, s, h):
+    def forward(self, s, h, mask= None):
         s = s.unsqueeze(dim=-1)
+        if mask is not None:
+            h = h.masked_fill(mask, -1e9)
         alpha = torch.bmm(h, s)
         alpha = F.softmax(alpha, dim=1)
         alpha = alpha.transpose(1, 2)
@@ -32,13 +46,14 @@ class Listener(nn.Module):
         self.blstm = nn.LSTM(self.filterbanksize, self.hidden_dim, num_layers=1, batch_first=True, bidirectional=True)
         self.pblstm = nn.ModuleList([nn.LSTM(self.hidden_dim*4, self.hidden_dim, num_layers=1, batch_first=True, bidirectional=True) for _ in range(self.pblstm_layer)])
 
-    def forward(self, x):
+    def forward(self, x, lgt_batch):
         x, _ = self.blstm(x)
         for i in range(self.pblstm_layer):
             batch_size, seq_len, input_size = x.size()
             x = x.contiguous().view(batch_size, seq_len//2, input_size*2)
+            lgt_batch = lgt_batch // 2
             x, _ = self.pblstm[i](x)
-        return x
+        return x, lgt_batch
 
 class Speller(nn.Module):
     def __init__(self, batch_size, hid_dim, out_dim, device):
@@ -53,7 +68,7 @@ class Speller(nn.Module):
         self.lstm2 = nn.LSTMCell(self.hid_dim, self.hid_dim)
         self.mlp = nn.Linear(self.hid_dim*2, self.out_dim)
 
-    def forward(self, hidden, y):
+    def forward(self, hidden, y, enc_len):
         """
         y : shape [batch_size, seq_len]
         """
@@ -75,20 +90,22 @@ class Speller(nn.Module):
         nn.init.uniform_(c2, a=-0.1, b=0.1)
         nn.init.uniform_(s2, a=-0.1, b=0.1)
 
-        c = self.attention(s, hidden) # shape : [batch_size][hid_dim]
+        mask = compute_mask(hidden, enc_len)
+
+        c = self.attention(s, hidden, mask=mask) # shape : [batch_size][hid_dim]
 
         for i in range(seq_len):
             # 1st layer of LSTM
             s, c1 = self.lstm1(torch.cat((y[i], c), dim=1), (s, c1))
             # 2nd layer of LSTM
             s2, c2 = self.lstm2(s, (s2, c2))
-            c = self.attention(s2, hidden) # shape : [batch_size][hid_dim]
+            c = self.attention(s2, hidden, mask=mask) # shape : [batch_size][hid_dim]
             output = F.log_softmax(self.mlp(torch.cat((s2, c), dim=1)), dim=-1)
             outputs.append(output)
         outputs = torch.stack(outputs, dim=0).transpose(0, 1)
         return outputs
 
-    def predict(self, enc_outputs, y, beam_size, eos_token):
+    def predict(self, enc_outputs, y, enc_len, beam_size, eos_token):
         # FOR BEAM SEARCH INFERENCE
 
         enc_outputs = enc_outputs.unsqueeze(dim=0)
@@ -108,7 +125,9 @@ class Speller(nn.Module):
         nn.init.uniform_(c2, a=-0.1, b=0.1)
         nn.init.uniform_(s2, a=-0.1, b=0.1)
 
-        c = self.attention(s, enc_outputs) # shape : [batch_size][hid_dim]
+        mask = compute_mask(enc_outputs, enc_len)
+
+        c = self.attention(s, enc_outputs, mask=mask) # shape : [batch_size][hid_dim]
         vy = torch.zeros(1, 1).long().to(self.device)
 
         hyp = {'score': 0.0, 'yseq': [y.item()], 'c_prev': [c1, c2], 'h_prev': [s, s2],
@@ -127,7 +146,7 @@ class Speller(nn.Module):
                 embedded = embedded.transpose(0, 1)
                 s, c1 = self.lstm1(torch.cat((embedded[0], c), dim=1), (s, c1))
                 s2, c2 = self.lstm2(s, (s2, c2))
-                c = self.attention(s2, enc_outputs) # shape : [1][hid_dim]
+                c = self.attention(s2, enc_outputs, mask=mask) # shape : [1][hid_dim]
                 local_scores = F.log_softmax(self.mlp(torch.cat((s2, c), dim=1)), dim=-1)
                 # topk scores
                 local_best_scores, local_best_ids = torch.topk(
@@ -188,15 +207,15 @@ class ListenAttendSpell(nn.Module):
         self.listener = Listener(self.filterbanksize, self.hid_dim // 2, self.batch_size)
         self.speller = Speller(self.batch_size, self.hid_dim, self.dec_out_dim, self.device)
 
-    def forward(self, x, y):
-        x = self.listener(x)
-        x = self.speller(x, y)
+    def forward(self, x, y, lgt_batch):
+        x, enc_len = self.listener(x, lgt_batch)
+        x = self.speller(x, y, enc_len)
         return x
 
-    def greedy_predict(self, x, y, max_len, eos_token):
+    def greedy_predict(self, x, y, lgt_batch, max_len, eos_token):
         # FOR GREEDY INFERENCE
-        enc_outputs = self.listener(x)
-        pred_batches = self.speller(enc_outputs, y)
+        enc_outputs, enc_len = self.listener(x, lgt_batch)
+        pred_batches = self.speller(enc_outputs, y, enc_len)
         sentences = torch.argmax(pred_batches, dim =-1)
         while (pred_batches.size()[1] < max_len and not is_finished(sentences, eos_token)):
             new_input = torch.cat((y, sentences), dim=1)
@@ -205,9 +224,9 @@ class ListenAttendSpell(nn.Module):
         
         return sentences
 
-    def predict(self, x, y, beam_size, eos_token):
+    def predict(self, x, y, lgt_batch, beam_size, eos_token):
         # FOR BEAM SEARCH INFERENCE
-        enc_outputs = self.listener(x)
-        hypos = self.speller.predict(enc_outputs[0], y, beam_size, eos_token)
+        enc_outputs, enc_len = self.listener(x, lgt_batch)
+        hypos = self.speller.predict(enc_outputs[0], y, enc_len, beam_size, eos_token)
         hypos = torch.Tensor(list(map(lambda x:x['yseq'], list(hypos))))
         return hypos
